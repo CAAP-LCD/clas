@@ -1,3 +1,14 @@
+# v7.5 changes: attested back page of PEL Form 541 / 542
+
+- **New box in the ALD desk (ALD actions): *Attested back page*.** ALD staff (and the administrator) choose the scanned, attested page 2 of the PEL form (JPG, PNG or PDF, up to 12 MB) and press **Upload scan & update compiled PDF**. **Remove scan** undoes it.
+- **Saved in the applicant's Drive folder** as `<ref>_PEL_BackPage_ATTESTED.jpg/.png/.pdf` (new Applications column `attestedLink`, added automatically). Uploading again replaces the previous scan (the old file goes to the Drive trash). Images are converted to JPEG, long side up to 2400 px, about 900 KB at most (sharper than other uploads because the page has small print).
+- **Compiled PDF is updated.** In the compiled PDF the scan **replaces the blank page 2 of the PEL form** (page 1 stays); it is fitted onto a page of the form's size. If the compiled PDF already exists in the folder (`compiledLink`) it is rebuilt and replaced at once, **without e-mailing the applicant again** (`noEmail` on `deskCompiledSave`). If it does not exist yet, the scan is just saved and goes into the compiled PDF when the KTP permit is generated. *Download compiled PDF* and the PEL preview on every desk (ALD, TOCID, Licensing Officer) also show the scan.
+- Files moved on rejection include the scan. Logged in Monitoring > Handled By.
+
+**Update steps:** paste `backend/apps-script.gs` (keep your IDs and passcodes), redeploy as a **new version**, upload `public/index.html`.
+
+---
+
 # v7.3 changes: "Other school" and a real survey check
 
 - **School drop-down has a last choice, *OTHER (my school is not in this list)*.** It shows a box to type the full school name (saved in capitals like every school). Drafts that hold a school not in the list reopen with that choice selected. The server needs no change for this: it already accepts any school text.
