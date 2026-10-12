@@ -679,7 +679,8 @@ function desk_(d) {
       const at = mn[i][0] ? new Date(mn[i][0]) : null;
       if (by && at && !isNaN(at) && (new Date() - at) > STALE_CLAIM_HOURS * 3600 * 1000) by = '';
       M[String(r[0])] = { initial: String(r[MC.initial - 1]), tocid: String(r[MC.tocid - 1]), ktp: String(r[MC.ktp - 1]), busy: by,
-                          lo: String(r[MC.lo - 1] || 'Pending'), loBy: String(r[MC.loBy - 1] || '') };
+                          lo: String(r[MC.lo - 1] || 'Pending'), loBy: String(r[MC.loBy - 1] || ''),
+                          remarks: String(r[MC.remarks - 1] || '').slice(-1500) };          // v7.6: the Monitoring > Remarks cell is shown on the to-do list
     });
     /* v6.3: who is an active ALD staff member (an assignment to anybody else counts as "unassigned" and is visible to all) */
     const aldNames = {}; accRows_().forEach(function (a) { if (a.role === 'ald' && a.active !== 'NO') aldNames[a.username] = a.name; });
@@ -687,7 +688,7 @@ function desk_(d) {
     for (let i = 0; i < A.rows.length; i++) {
       const r = A.rows[i];
       if (String(r[col('status')]).trim().toUpperCase() === 'REJECTED') continue;       // rejected = closed (Drive folder moved to Rejected Applications)
-      const ref = txt_(r[col('reference')]), m = M[ref] || { initial: 'Pending', tocid: String(r[col('tocidStatus')]) ? 'Approved' : 'Pending', ktp: 'Pending', busy: '', lo: 'Pending', loBy: '' };
+      const ref = txt_(r[col('reference')]), m = M[ref] || { initial: 'Pending', tocid: String(r[col('tocidStatus')]) ? 'Approved' : 'Pending', ktp: 'Pending', busy: '', lo: 'Pending', loBy: '', remarks: '' };
       const asg = txt_(r[col('assignedTo')]), walk = txt_(r[col('walkIn')]) === 'YES', asgActive = !!(asg && aldNames[asg]);
       /* ALD staff only see the initial approvals assigned to them (walk-ins are visible to all ALD staff);
          once the initial approval is given every application is on every list. Admin, TOCID and the Licensing Officers see all. */
@@ -698,7 +699,7 @@ function desk_(d) {
                  name: txt_(r[col('lastName')]) + ', ' + txt_(r[col('firstName')]),
                  type: txt_(r[col('appTypeLabel')]) + ' (' + txt_(r[col('formUsed')]) + ')',
                  school: txt_(r[col('school')]), gradYear: txt_(r[col('gradYear')]), degree: txt_(r[col('degree')]),
-                 hasDraft: !!r[col('draftLink')], lo: m.lo, loBy: m.loBy, hasF001: !!r[col('f001Link')], initial: m.initial, tocid: (rowNoTocid_(r, col) && m.tocid !== 'Approved') ? 'N/A' : m.tocid, ktp: m.ktp, busy: m.busy,
+                 hasDraft: !!r[col('draftLink')], lo: m.lo, loBy: m.loBy, hasF001: !!r[col('f001Link')], initial: m.initial, tocid: (rowNoTocid_(r, col) && m.tocid !== 'Approved') ? 'N/A' : m.tocid, ktp: m.ktp, busy: m.busy, remarks: m.remarks,
                  is541: /541/.test(txt_(r[col('formUsed')])), noTocid: rowNoTocid_(r, col),
                  walkIn: walk, assignedTo: asgActive ? asg : '', assignedName: asgActive ? aldNames[asg] : '', mine: asg === me.username,
                  _t: isNaN(t) ? 0 : t.getTime(), _i: i };
@@ -814,6 +815,19 @@ function desk_(d) {
   if (d.op === 'deskRelease') {
     if (mrow) { const bi = busyInfo_(mon, mrow); if (!bi.by || bi.by.indexOf(label) === 0) setBusy_(mon, mrow, ''); }
     return json_({ ok: true });
+  }
+
+  /* v7.6: any signed-in staff member (ALD, TOCID, Licensing Officer, administrator) adds a remark: why it is delayed, an issue or a concern.
+     It is appended to the Monitoring > Remarks cell (the same cell the script and the staff already use) with date, name and role. */
+  if (d.op === 'deskRemark') {
+    const t = String(d.text || '').replace(/\s*\n\s*/g, ' ').trim();
+    if (t.length < 3) return json_({ ok: false, error: 'Please write the remark (at least 3 characters).' });
+    if (t.length > 500) return json_({ ok: false, error: 'The remark is too long (500 characters at most).' });
+    if (!mrow) return json_({ ok: false, error: 'This application has no row in the Monitoring sheet.' });
+    addRemark_(mon, mrow, Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd HH:mm') + '  ' + d.me.name + ' (' + roleLabel_(d.role) + '): ' + t);
+    logHandled_(mon, mrow, 'Remark added: ' + d.me.name);
+    SpreadsheetApp.flush();
+    return json_({ ok: true, remarks: String(mon.getRange(mrow, MC.remarks).getValue() || '') });
   }
 
   const setGroup = function (header, value) { refsOf().forEach(function (r) { setMonitor_(r, header, value); }); };
