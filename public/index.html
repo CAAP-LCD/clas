@@ -3238,7 +3238,7 @@ async function dkLoad(o, ref, row, out){
   await dkPreview();
 }
 async function dkOpen(ref){
-  const row = deskRows.find(r => r.reference === ref); if (!row) return;
+  const row = deskRows.find(r => r.reference === ref); if (!row){ dkFail(new Error('This application is not in the loaded list (' + ref + '). Reload the page and sign in again.')); return; }
   if (deskRole === 'tocid' && row.initial !== 'Approved' && !confirm('ALD staff have not given the initial approval yet.\n\nOpen it anyway?')) return;
   if (deskRole === 'lo' && !(row.initial === 'Approved' && tocidOk(row)) && !confirm('This application is not ready for the Licensing Officer yet (ALD initial approval or, for AMT / AMS, TOCID validation is pending).\n\nOpen it anyway?')) return;
   const who = dkWho(); if (!who){ $('dkListMsg').textContent = 'Enter your name to open an application.'; return; }
@@ -3261,11 +3261,23 @@ async function dkOpen(ref){
     row.busy = who + ' (' + (deskRole === 'tocid' ? 'TOCID' : deskRole === 'lo' ? 'Licensing Officer' : 'ALD') + ')';
     dkRender(); $('dkListMsg').textContent = '';
   } catch (e){
-    $('dkListMsg').textContent = e.message; dkClear();
+    $('dkListMsg').textContent = e.message; dkClear(); dkFail(e);
     try { await dkCall({ op: 'deskRelease', reference: ref }); } catch (_) {}
   }
 }
-$('dkList').onclick = e => { const it = e.target.closest('.tcItem'); if (it && it.dataset.ref) dkOpen(it.dataset.ref); };
+/* v7.5 diagnostics: a failed click on an application now ALWAYS shows its reason (pop-up + console), never silence */
+function dkFail(err){
+  const m = (err && err.message) ? err.message : String(err);
+  console.error('[open application]', err);
+  try { $('dkListMsg').textContent = 'Could not open: ' + m; } catch (_) {}
+  alert('Could not open this application.\n\n' + m);
+}
+window.addEventListener('unhandledrejection', ev => { if (deskRole) dkFail(ev.reason); });
+$('dkList').onclick = e => {
+  const it = e.target.closest('.tcItem');
+  console.log('[open application] click', it ? it.dataset.ref : '(no item under the click)');
+  if (it && it.dataset.ref) dkOpen(it.dataset.ref).catch(dkFail);
+};
 $('dkLoadFile').onclick = () => {
   const i = document.createElement('input'); i.type = 'file'; i.accept = '.json';
   i.onchange = e => { const fr = new FileReader(); fr.onload = async ev => { try { await dkReleaseCurrent(); await dkLoad(JSON.parse(ev.target.result), '', null, null); } catch (x){ alert('That is not a valid draft file.'); } }; fr.readAsText(e.target.files[0]); };
