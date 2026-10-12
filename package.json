@@ -1,6 +1,6 @@
 {
   "name": "caap-form-generator",
-  "version": "7.4.0",
+  "version": "7.5.0",
   "description": "CAAP Airmen Licensing - Flow/PEL 541/542 form generator",
   "private": true,
   "scripts": {
