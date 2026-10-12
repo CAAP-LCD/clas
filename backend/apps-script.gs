@@ -43,8 +43,8 @@
  *   Upgrade / Proficiency Check / Additional Rating are not affected.
  */
 
-const SHEET_ID  = 'PASTE_SPREADSHEET_ID_HERE';
-const FOLDER_ID = 'PASTE_DRIVE_FOLDER_ID_HERE';
+const SHEET_ID  = '1a0k5X02bdQHfKyo2gh5gTvG4CRqBaozCjGfj-suKtdE';
+const FOLDER_ID = '1ZffMImYICPNNANtV0jmsabpTe3wWNWHv';
 /* TOCID sign-in. Must be the same passcode you give the TOCID officers; the server checks it, so
    nobody can list, open or validate applications without it. CHANGE IT before going live. */
 const ACC_TAB = 'Accounts';           // staff accounts (admin creates / edits / deletes them from the page)
@@ -52,7 +52,7 @@ const SESSION_SECONDS = 21600;       // a sign-in lasts 6 hours (the maximum the
 const TOCID_PASSCODE = '';           // no longer used: TOCID officers now have their own accounts
 /* STAFF (ALD) passcode, same one staff type on the page. The server checks it when the Approve button
    tells the Monitoring sheet that "ALD Approval for KTP" is done. CHANGE IT and keep both in step. */
-const ADMIN_PASSCODE = 'CHANGE_ME_BEFORE_DEPLOYING';
+const ADMIN_PASSCODE = 'Gmcle@r123';
 /* Folder layout: FOLDER_ID / yyyy-MM-dd / <LAST-FIRST>_<control no.> / (PDFs, photo, signature, draft).
    true = date folder, then one folder per applicant submission.  false = everything straight into FOLDER_ID. */
 const USE_DAY_SUBFOLDERS = true;
@@ -71,7 +71,7 @@ const SURVEY_SHEET_TAB = '';      // '' = the first tab of that sheet
    REGISTER_SHEET_ID = the Google Sheet ID (docs.google.com/spreadsheets/d/<ID>/edit). If the three tabs are in
    different files, give each its own id below. Native Google Sheet only (an .xlsx in Drive: File > Save as Google Sheets).
    The account this script runs as needs edit access. Tabs are found by gid (the number after #gid= in the link). */
-const REGISTER_SHEET_ID = 'PASTE_REGISTER_SPREADSHEET_ID_HERE';
+const REGISTER_SHEET_ID = '1iKJxGzi0J96nuzSbAk8hNwUTpUxt5DkO';
 const REGISTERS = {
   MECH:  { id: '', gid: 413218578  },      // AMT, AMS
   PILOT: { id: '', gid: 1526991716 },      // PPL, CPL, ATPL, FI, pilot additional, conversion/validation
@@ -128,6 +128,8 @@ const COLUMNS = [
   'trainingLink', 'psaLink', 'medicalLink', 'droneLink', 'droneSpecLink', 'droneKg',
   // v7.4: Certificate of Employment (PEL 542 applied for on the basis of Experience)
   'coeLink',
+  // v7.5: scanned, attested back page (page 2) of PEL Form 541 / 542, uploaded by ALD staff
+  'attestedLink',
 ];
 
 /* =====================================================================================
@@ -792,7 +794,7 @@ function desk_(d) {
     const dl = txt_(row[col('draftLink')]), id = fileId_(dl);
     if (!id) return json_({ ok: false, error: 'No draft file is stored for this application (it was submitted before drafts were saved).' });
     const att = {};
-    [['ground', 'groundLink'], ['diploma', 'diplomaLink'], ['tor', 'torLink'], ['ojt', 'ojtLink'], ['training', 'trainingLink'], ['psa', 'psaLink'], ['medical', 'medicalLink'], ['dronephoto', 'droneLink'], ['dronespec', 'droneSpecLink'], ['coe', 'coeLink'], ['f001', 'f001Link'], ['permit', 'permitLink']].forEach(function (p) {
+    [['ground', 'groundLink'], ['diploma', 'diplomaLink'], ['tor', 'torLink'], ['ojt', 'ojtLink'], ['training', 'trainingLink'], ['psa', 'psaLink'], ['medical', 'medicalLink'], ['dronephoto', 'droneLink'], ['dronespec', 'droneSpecLink'], ['coe', 'coeLink'], ['attested', 'attestedLink'], ['f001', 'f001Link'], ['permit', 'permitLink']].forEach(function (p) {
       const fid = fileId_(row[col(p[1])]);
       if (fid) { try { const b = DriveApp.getFileById(fid).getBlob(); att[p[0]] = { mime: b.getContentType(), data: Utilities.base64Encode(b.getBytes()) }; } catch (e) { console.error(e); } }
     });
@@ -890,6 +892,34 @@ function desk_(d) {
     } finally { lock.releaseLock(); }
   }
 
+  /* v7.5: the attested back page (page 2) of PEL Form 541 / 542, scanned by ALD staff. It is stored in the applicant's folder
+     and replaces the blank page 2 in the compiled PDF (the page then rebuilds the compiled PDF and sends it through deskCompiledSave with noEmail). */
+  if (d.op === 'deskAttestedSave' && d.role === 'ald') {
+    const oldA = fileId_(row[col('attestedLink')]);
+    if (d.remove === true || d.remove === 'true') {
+      if (!oldA) return json_({ ok: false, error: 'There is no attested back page on file for this application.' });
+      try { DriveApp.getFileById(oldA).setTrashed(true); } catch (e) {}
+      A.sheet.getRange(idx + 2, col('attestedLink') + 1).setValue('');
+      logHandled_(mon, mrow, 'Attested back page removed: ' + d.me.name);
+      SpreadsheetApp.flush();
+      return json_({ ok: true, removed: true });
+    }
+    const mimeA = String(d.mime || '');
+    if (['application/pdf', 'image/jpeg', 'image/png'].indexOf(mimeA) < 0) return json_({ ok: false, error: 'The attested back page must be a JPG, PNG or PDF scan.' });
+    if (!d.data || String(d.data).length > 16 * 1024 * 1024) return json_({ ok: false, error: !d.data ? 'The scanned file was not received.' : 'The scanned file is too large.' });
+    let folderA = null;
+    try { const fid = txt_(row[col('folderId')]); if (fid) folderA = DriveApp.getFolderById(fid); } catch (e) {}
+    if (!folderA) { const pid = fileId_(row[col('draftLink')]); if (pid) { try { const ps = DriveApp.getFileById(pid).getParents(); if (ps.hasNext()) folderA = ps.next(); } catch (e) {} } }
+    if (!folderA) folderA = DriveApp.getFolderById(FOLDER_ID);
+    const extA = mimeA === 'application/pdf' ? '.pdf' : mimeA === 'image/png' ? '.png' : '.jpg';
+    const linkA = saveFile_(folderA, d.data, mimeA, ref + '_PEL_BackPage_ATTESTED' + extA);
+    if (oldA) { try { DriveApp.getFileById(oldA).setTrashed(true); } catch (e) {} }      // replaced, not duplicated
+    A.sheet.getRange(idx + 2, col('attestedLink') + 1).setValue(linkA);
+    logHandled_(mon, mrow, 'Attested back page uploaded: ' + d.me.name);
+    SpreadsheetApp.flush();
+    return json_({ ok: true, link: linkA, compiled: !!txt_(row[col('compiledLink')]) });
+  }
+
   /* v6.3: the compiled PDF (PEL form + data flow + attachments + Form 001 + KTP) is stored in the applicant's folder */
   if (d.op === 'deskCompiledSave' && d.role === 'ald') {
     if (!d.pdf) return json_({ ok: false, error: 'The compiled PDF was not received.' });
@@ -901,10 +931,10 @@ function desk_(d) {
     const link = saveFile_(folder, d.pdf, 'application/pdf', ref + '_COMPILED_FORMS' + (txt_(row[col('permitCtrl')]) ? '_' + txt_(row[col('permitCtrl')]) : '') + '.pdf');
     if (oldC) { try { DriveApp.getFileById(oldC).setTrashed(true); } catch (e) {} }
     A.sheet.getRange(idx + 2, col('compiledLink') + 1).setValue(link);
-    logHandled_(mon, mrow, 'Compiled PDF saved: ' + d.me.name);
+    logHandled_(mon, mrow, (d.noEmail ? 'Compiled PDF updated (attested back page): ' : 'Compiled PDF saved: ') + d.me.name);
     /* v6.3: e-mail the applicant their compiled application (PEL form, data flow, attachments, Form 001, KTP) */
     let emailed = false;
-    const to = txt_(row[col('email')]);
+    const to = d.noEmail ? '' : txt_(row[col('email')]);          // v7.5: a rebuild after the back page changed is not e-mailed again
     if (to) {
       try {
         const nmE = [txt_(row[col('firstName')]), txt_(row[col('lastName')])].filter(String).join(' '), ctrlE = txt_(row[col('permitCtrl')]);
@@ -1017,7 +1047,7 @@ function desk_(d) {
         }
       } else {                                                         // older submissions without a folder: gather this applicant's files in a new folder
         const dest = root.createFolder(safe_(txt_(row[col('lastName')])) + '-' + safe_(txt_(row[col('firstName')])) + '_' + ref);
-        ['pdfLink', 'photoLink', 'signatureLink', 'draftLink', 'diplomaLink', 'torLink', 'ojtLink', 'groundLink', 'trainingLink', 'psaLink', 'medicalLink', 'droneLink', 'droneSpecLink', 'coeLink'].forEach(function (k) {
+        ['pdfLink', 'photoLink', 'signatureLink', 'draftLink', 'diplomaLink', 'torLink', 'ojtLink', 'groundLink', 'trainingLink', 'psaLink', 'medicalLink', 'droneLink', 'droneSpecLink', 'coeLink', 'attestedLink'].forEach(function (k) {
           group.forEach(function (i) { const f = fileId_(A.rows[i][col(k)]); if (f) { try { DriveApp.getFileById(f).moveTo(dest); moved = 'files'; } catch (e) {} } });
         });
         try { dest.createFile('REJECTION_NOTE.txt', note); } catch (e) {}
@@ -2036,4 +2066,26 @@ function surveyAnswered_(email) {
         if (String(v[r][cols[c]]).trim().toLowerCase() === want) return true;
     return false;
   } catch (e) { Logger.log('surveyAnswered_: ' + e); return true; }   // sheet unreadable: do not block applicants (fix the ID / sharing)
+}
+function testDraftRead() {
+  const A = appRows_(), col = A.col;
+  for (let i = A.rows.length - 1; i >= 0; i--) {
+    const id = fileId_(txt_(A.rows[i][col('draftLink')]));
+    if (!id) continue;
+    const f = DriveApp.getFileById(id);
+    console.log('OK: ' + txt_(A.rows[i][col('reference')]) + ' -> ' + f.getName() + ' (' + f.getSize() + ' bytes)');
+    console.log(f.getBlob().getDataAsString().slice(0, 80));
+    return;
+  }
+  console.log('No application has a draftLink.');
+}
+function checkDraftLinks() {
+  const A = appRows_(), col = A.col;
+  A.rows.slice(-15).forEach(function (r) {
+    const ref = txt_(r[col('reference')]), link = txt_(r[col('draftLink')]), id = fileId_(link);
+    let res;
+    try { const f = DriveApp.getFileById(id); res = 'OK  ' + f.getName() + (f.isTrashed() ? '  (IN TRASH)' : ''); }
+    catch (e) { res = 'FAIL  ' + e; }
+    console.log(ref + ' | ' + link + ' | ' + res);
+  });
 }
