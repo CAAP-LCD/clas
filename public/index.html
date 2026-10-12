@@ -533,6 +533,14 @@ details.anHelp{margin:10px 0 2px;font-size:.92rem}details.anHelp summary{cursor:
           <select id="dkVenueSel"><option value="">CAAP Hangar, Andrews Avenue, Pasay City (default)</option><option value="custom">Custom address&hellip;</option></select>
           <input type="text" id="dkVenueTxt" list="dkVenueRecent" placeholder="e.g. CAAP Hangar, Andrews Avenue, Pasay City" hidden><datalist id="dkVenueRecent"></datalist>
           <div class="hint">Printed after &ldquo;You shall proceed directly to&rdquo;. Used by <i>Approve for KTP</i> and <i>Generate KTP permit</i>; press Generate KTP permit again to change it on a permit that already exists.</div></div>
+        <div class="dkVenue" id="dkAttBox"><b>Attested back page</b> (page 2 of PEL Form 541 / 542)
+          <div class="hint" id="dkAttState">Open an application to upload the scanned, attested back page.</div>
+          <input type="file" id="dkAttFile" accept="image/jpeg,image/png,application/pdf,.pdf,.jpg,.jpeg,.png" disabled>
+          <div class="dkBtns">
+            <button type="button" id="dkAttUp" class="ghost" disabled title="Saves the scan in the applicant's Drive folder and updates the compiled PDF there">Upload scan &amp; update compiled PDF</button>
+            <button type="button" id="dkAttDel" class="danger" disabled>Remove scan</button>
+          </div>
+          <div class="hint">JPG, PNG or PDF. The scan replaces the blank page 2 of the PEL form in the compiled PDF. Uploading again replaces the previous scan.</div></div>
         <label class="dkWalkRow"><input type="checkbox" id="dkWalkin" disabled> <b>Walk-in applicant</b> &mdash; number 1 priority (moves to the top of every list)</label>
         <div class="dkBtns">
           <button type="button" id="dkInitial" disabled>Initial approval (diploma &amp; TOR are OK)</button>
@@ -2819,6 +2827,25 @@ async function approveFlow(){
 
 /* ---------- Knowledge Test Permit (the last step, right after ALD approves for KTP) ---------- */
 /* Compiled PDF of one applicant: PEL form, data flow (approved), TOR + diploma (+ OJT) or ground school certificate, Form 001, KTP last */
+/* v7.5: the scanned, attested back page replaces the blank page 2 of the PEL form (page 1 stays); it is fitted onto a page of the form's size.
+   Used by the compiled PDF and by the PEL preview on every desk. Returns the bytes of the PEL form (with the scan when there is one). */
+async function pelWithBack(pelDoc){
+  const bytes = await pelDoc.save(), f = deskAtt && deskAtt.attested;
+  if (!f || !window.PDFLib) return bytes;
+  const out = await PDFLib.PDFDocument.create(), src = await PDFLib.PDFDocument.load(bytes, { ignoreEncryption: true });
+  const [p1] = await out.copyPages(src, [0]); out.addPage(p1);
+  const sz = src.getPage(Math.min(1, src.getPageCount() - 1)).getSize(), PW = sz.width, PH = sz.height, M = 10;
+  const fit = (w, h) => { const k = Math.min((PW - 2 * M) / w, (PH - 2 * M) / h); return { w: w * k, h: h * k, x: (PW - w * k) / 2, y: (PH - h * k) / 2 }; };
+  const raw = b64ToBytes(f.data);
+  if (/pdf/i.test(f.mime)){
+    const emb = await out.embedPdf(await PDFLib.PDFDocument.load(raw, { ignoreEncryption: true }), undefined);
+    emb.forEach(e => { const r = fit(e.width, e.height); out.addPage([PW, PH]).drawPage(e, { x: r.x, y: r.y, width: r.w, height: r.h }); });
+  } else {
+    const img = /png/i.test(f.mime) ? await out.embedPng(raw) : await out.embedJpg(raw), r = fit(img.width, img.height);
+    out.addPage([PW, PH]).drawImage(img, { x: r.x, y: r.y, width: r.w, height: r.h });
+  }
+  return await out.save();
+}
 async function buildCompiledPdf(permitBytes){
   const out = await PDFLib.PDFDocument.create(), W = 595.28, H = 841.89, M = 28;
   const addPdf = async bytes => { const src = await PDFLib.PDFDocument.load(bytes, { ignoreEncryption: true }); (await out.copyPages(src, src.getPageIndices())).forEach(pg => out.addPage(pg)); };
@@ -2835,7 +2862,7 @@ async function buildCompiledPdf(permitBytes){
   let d, flowDoc;
   approving = true;                                          // the compiled copy carries the approval date and the officer signatures
   try { d = collect(); flowDoc = await buildFlow(d); } finally { approving = keep; }
-  await addPdf(await (is541 ? await build541(d) : await build542(d)).save());
+  await addPdf(await pelWithBack(is541 ? await build541(d) : await build542(d)));          // v7.5: page 2 = the attested scan, when uploaded
   await addPdf(await flowDoc.save());
   for (const k of docKeys()) await addAtt(k);
   await addPdf(deskAtt.f001 ? b64ToBytes(deskAtt.f001.data) : await dkBuild001(null));
@@ -2883,6 +2910,7 @@ async function permitFlow(ref){
     try {                                                   // v6.3: the compiled forms, KTP last, are saved in the applicant's folder too
       const cbytes = await buildCompiledPdf(pdf);
       const cs = await permitCall({ op: 'deskCompiledSave', reference: ref, pdf: toB64(cbytes) });
+      deskCompiledOn = true;
       cmsg = cs.emailed ? ' Emailed to the applicant.' : ' (The e-mail to the applicant could not be sent.)';
     } catch (ce){ console.error(ce); cmsg = ' (The compiled PDF could not be saved: ' + ce.message + ' \u2014 press Generate KTP permit again.)'; }
     say('Permit ' + r.ctrl + ' (Temporary PEL / PEL ' + r.pel + ') generated and saved in the applicant\u2019s folder' + (cmsg.indexOf('could not be saved') > -1 ? '.' : ', together with the compiled PDF.') + ' Monitoring sheet and register updated.' + cmsg);
@@ -3060,7 +3088,7 @@ $('adminLogout').onclick = () => { isAdmin = false; adminPw = ''; try { sessionS
    TOCID: stamp (printed in the XIII remarks area) or "name not on the graduates list" (e-mails the applicant).
    ALD:   initial approval, then approval for KTP (date + officer signatures).  Passcodes are also checked on the server. */
 const TOCID_HASH = 'a6d0bcd7ffc46aaead71c0861ed7ee018a5d545a1002d2316109b589d4ee66d7';
-let deskSec = {}, deskSecBuilt = false, deskAtt = {}, loTimer = null;
+let deskSec = {}, deskSecBuilt = false, deskAtt = {}, loTimer = null, deskCompiledOn = false;   // v7.5: deskCompiledOn = a compiled PDF already exists in the applicant's folder
 let deskRole = '', tocidPass = '', deskRef = '', deskCur = null, deskLoaded = false, deskRows = [], deskUrl = '', deskBytes = null, deskTimer = null, deskBlobs = [], dkWhoName = '';
 const tcPick = n => { const r = document.querySelector(`input[name="${n}"]:checked`); return r ? r.value : ''; };
 const dkMsg = t => $('dkMsg').textContent = t;
@@ -3137,8 +3165,8 @@ async function dkReleaseCurrent(){
 function dkClear(){
   deskRef = ''; deskCur = null; deskLoaded = false; tocidData = null;
   dkShowEmpty('Select an application from the list \u2014 the data flow appears here at once.'); $('dkInfo').hidden = true; $('dkAtt').hidden = true; $('dkCurrent').textContent = 'No application opened yet.';
-  ['tcValidate', 'tcNotOnList', 'tcReject', 'dkInitial', 'dkApprove', 'dkPermit', 'dkReject', 'dkEdit', 'dkDownload', 'loSubmit', 'dkWalkin', 'dkCompiled'].forEach(i => $(i).disabled = true);
-  $('dkWalkin').checked = false;
+  ['tcValidate', 'tcNotOnList', 'tcReject', 'dkInitial', 'dkApprove', 'dkPermit', 'dkReject', 'dkEdit', 'dkDownload', 'loSubmit', 'dkWalkin', 'dkCompiled', 'dkAttFile', 'dkAttUp', 'dkAttDel'].forEach(i => $(i).disabled = true);
+  $('dkWalkin').checked = false; $('dkAttFile').value = ''; deskCompiledOn = false;
   deskSecBuilt = false; deskSec = {}; deskAtt = {};
 }
 function dkButtons(){
@@ -3148,6 +3176,9 @@ function dkButtons(){
   $('dkInitial').disabled = !(can && r && r.initial !== 'Approved');
   $('dkWalkin').disabled = !(can && deskRef && r && r.initial !== 'Approved' && deskRole === 'ald'); $('dkWalkin').checked = !!(r && r.walkIn);
   $('dkCompiled').disabled = !can;
+  const attOk = !!(can && deskRef && r && deskRole === 'ald');                       // v7.5: attested back page
+  $('dkAttFile').disabled = !attOk; $('dkAttUp').disabled = !attOk; $('dkAttDel').disabled = !(attOk && deskAtt.attested);
+  $('dkAttState').innerHTML = !deskRef ? 'Open an application to upload the scanned, attested back page.' : deskAtt.attested ? '<b>Attested back page is on file</b> (saved in the applicant\u2019s Drive folder' + (deskCompiledOn ? ' and used in the compiled PDF' : '; it goes into the compiled PDF when that is generated') + ').' : 'No attested back page uploaded yet.';
   $('dkApprove').disabled = !(can && r && r.initial === 'Approved' && tocidOk(r) && loOk(r) && r.ktp !== 'Approved');
   $('dkPermit').disabled = !(can && deskRef && r && r.ktp === 'Approved' && deskRole === 'ald');
   $('loSubmit').disabled = !(can && deskRef && r && r.initial === 'Approved' && tocidOk(r) && r.ktp !== 'Approved' && sess && sess.signature);
@@ -3204,7 +3235,7 @@ async function dkAttInto(node, key){
    Ground School certificate for 541, then Form 001. */
 function dkSections(){
   const is541 = radio('cat') === '541';
-  const list = [['pel', is541 ? 'PEL Form 541 (flight crew)' : 'PEL Form 542 (other than flight crew)'], ['flow', 'Data Flow \u2014 Flow, Permit & Clearance form']];
+  const list = [['pel', (is541 ? 'PEL Form 541 (flight crew)' : 'PEL Form 542 (other than flight crew)') + (deskAtt.attested ? ' \u2014 page 2 = attested scan' : '')], ['flow', 'Data Flow \u2014 Flow, Permit & Clearance form']];
   docKeys().forEach(k => list.push([k, DOC_LABEL[k]]));
   list.push(['f001', 'Form 001 \u2014 Application for Aeronautical Knowledge Test Permit']);
   if (deskAtt.permit) list.push(['permit', 'Knowledge Test Permit (KTP)']);          // v6.3: the generated KTP is the last page(s) of the compiled forms
@@ -3230,7 +3261,7 @@ async function dkFill001(){
 async function dkFlow(){ const doc = await buildFlow(collect()); deskBytes = await doc.save(); await dkPdfInto(deskSec.flow, deskBytes); }
 async function dkLoad(o, ref, row, out){
   applyDraft(o); deskRef = ref; deskCur = row || null; deskLoaded = true;
-  deskAtt = (out && out.attachments) || {}; deskSecBuilt = false;
+  deskAtt = (out && out.attachments) || {}; deskSecBuilt = false; deskCompiledOn = !!(out && out.info && out.info.compiledLink);
   dkFill(tocidData);
   $('dkCurrent').textContent = (([val('lastName'), val('firstName')].filter(Boolean).join(', ')) || 'Application') + (ref ? '  \u00b7  ' + ref : '');
   dkVenueSet(out && out.info && out.info.permitVenue);
@@ -3238,7 +3269,7 @@ async function dkLoad(o, ref, row, out){
   await dkPreview();
 }
 async function dkOpen(ref){
-  const row = deskRows.find(r => r.reference === ref); if (!row){ dkFail(new Error('This application is not in the loaded list (' + ref + '). Reload the page and sign in again.')); return; }
+  const row = deskRows.find(r => r.reference === ref); if (!row) return;
   if (deskRole === 'tocid' && row.initial !== 'Approved' && !confirm('ALD staff have not given the initial approval yet.\n\nOpen it anyway?')) return;
   if (deskRole === 'lo' && !(row.initial === 'Approved' && tocidOk(row)) && !confirm('This application is not ready for the Licensing Officer yet (ALD initial approval or, for AMT / AMS, TOCID validation is pending).\n\nOpen it anyway?')) return;
   const who = dkWho(); if (!who){ $('dkListMsg').textContent = 'Enter your name to open an application.'; return; }
@@ -3261,23 +3292,11 @@ async function dkOpen(ref){
     row.busy = who + ' (' + (deskRole === 'tocid' ? 'TOCID' : deskRole === 'lo' ? 'Licensing Officer' : 'ALD') + ')';
     dkRender(); $('dkListMsg').textContent = '';
   } catch (e){
-    $('dkListMsg').textContent = e.message; dkClear(); dkFail(e);
+    $('dkListMsg').textContent = e.message; dkClear();
     try { await dkCall({ op: 'deskRelease', reference: ref }); } catch (_) {}
   }
 }
-/* v7.5 diagnostics: a failed click on an application now ALWAYS shows its reason (pop-up + console), never silence */
-function dkFail(err){
-  const m = (err && err.message) ? err.message : String(err);
-  console.error('[open application]', err);
-  try { $('dkListMsg').textContent = 'Could not open: ' + m; } catch (_) {}
-  alert('Could not open this application.\n\n' + m);
-}
-window.addEventListener('unhandledrejection', ev => { if (deskRole) dkFail(ev.reason); });
-$('dkList').onclick = e => {
-  const it = e.target.closest('.tcItem');
-  console.log('[open application] click', it ? it.dataset.ref : '(no item under the click)');
-  if (it && it.dataset.ref) dkOpen(it.dataset.ref).catch(dkFail);
-};
+$('dkList').onclick = e => { const it = e.target.closest('.tcItem'); if (it && it.dataset.ref) dkOpen(it.dataset.ref); };
 $('dkLoadFile').onclick = () => {
   const i = document.createElement('input'); i.type = 'file'; i.accept = '.json';
   i.onchange = e => { const fr = new FileReader(); fr.onload = async ev => { try { await dkReleaseCurrent(); await dkLoad(JSON.parse(ev.target.result), '', null, null); } catch (x){ alert('That is not a valid draft file.'); } }; fr.readAsText(e.target.files[0]); };
@@ -3290,7 +3309,7 @@ async function dkPreview(){
     if (!deskSecBuilt){
       dkSections(); deskSecBuilt = true;
       const d = collect();
-      const jobs = [dkFlow(), (async () => { const doc = d.cat === '541' ? await build541(d) : await build542(d); await dkPdfInto(deskSec.pel, await doc.save()); })(), dkFill001()];
+      const jobs = [dkFlow(), (async () => { const doc = d.cat === '541' ? await build541(d) : await build542(d); await dkPdfInto(deskSec.pel, await pelWithBack(doc)); })(), dkFill001()];
       [...DOC_KINDS, 'permit'].forEach(k => { if (deskSec[k]) jobs.push(dkAttInto(deskSec[k], k)); });
       await Promise.all(jobs);
     } else await dkFlow();
@@ -3363,6 +3382,62 @@ $('dkCompiled').onclick = async () => {
   const b = $('dkCompiled'); b.disabled = true; dkMsg('Building the compiled PDF\u2026');
   try { const bytes = await buildCompiledPdf(deskAtt.permit ? b64ToBytes(deskAtt.permit.data) : null); download('COMPILED_' + (deskRef || draftFileName().replace(/^caap-draft_|\.json$/g, '')) + '.pdf', bytes); dkMsg('Compiled PDF downloaded.'); }
   catch (e){ console.error(e); dkMsg('Could not build it: ' + e.message); }
+  finally { dkButtons(); }
+};
+/* ---- v7.5: attested back page (page 2 of PEL Form 541 / 542) ---- */
+async function readAttestedScan(file){
+  if (file.size > 12 * 1024 * 1024) throw new Error('The file is larger than 12 MB. Scan at a lower resolution (200 dpi is enough).');
+  const mime = file.type || (/\.pdf$/i.test(file.name) ? 'application/pdf' : /\.png$/i.test(file.name) ? 'image/png' : /\.jpe?g$/i.test(file.name) ? 'image/jpeg' : '');
+  if (mime === 'application/pdf'){
+    const url = await shrinkPdfFile(file);
+    return { mime: 'application/pdf', data: url.slice(url.indexOf(',') + 1) };
+  }
+  if (!/^image\/(jpeg|png)$/.test(mime)) throw new Error('Use a JPG, PNG or PDF scan.');
+  const raw = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = e => res(e.target.result); fr.onerror = () => rej(new Error('The file could not be read.')); fr.readAsDataURL(file); });
+  const img = await loadImg(raw).catch(() => { throw new Error('That image could not be opened.'); }), k = Math.min(1, 2400 / Math.max(img.naturalWidth, img.naturalHeight));
+  const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(img.naturalWidth * k)); c.height = Math.max(1, Math.round(img.naturalHeight * k));
+  const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height); x.drawImage(img, 0, 0, c.width, c.height);
+  let q = 0.86, out = c.toDataURL('image/jpeg', q);                                  // the page has small print: larger and sharper than the other uploads
+  while (dataBytes(out) > 900 * 1024 && q > 0.6){ q -= 0.06; out = c.toDataURL('image/jpeg', q); }
+  return { mime: 'image/jpeg', data: out.slice(out.indexOf(',') + 1) };
+}
+async function dkAttRefresh(){            // after the scan changed: rebuild the compiled PDF in the applicant's folder (no e-mail) and redraw the preview
+  let note = '';
+  if (deskCompiledOn){
+    try {
+      const cbytes = await buildCompiledPdf(deskAtt.permit ? b64ToBytes(deskAtt.permit.data) : null);
+      await dkCall({ op: 'deskCompiledSave', reference: deskRef, pdf: toB64(cbytes), noEmail: true });
+      note = ' The compiled PDF in the applicant\u2019s folder was updated.';
+    } catch (e){ console.error(e); note = ' BUT the compiled PDF could not be updated (' + e.message + '). Press the button again to retry.'; }
+  } else note = ' The compiled PDF has not been generated yet; it will include the scan when it is.';
+  deskSecBuilt = false; dkButtons(); await dkPreview();
+  return note;
+}
+$('dkAttUp').onclick = async () => {
+  const f = $('dkAttFile').files[0];
+  if (!deskRef){ return; }
+  if (!f){ dkMsg('Choose the scanned back page first (JPG, PNG or PDF).'); $('dkAttFile').focus(); return; }
+  if (!confirm('Save "' + f.name + '" as the attested back page of this application?' + (deskAtt.attested ? '\n\nThe scan already on file will be replaced.' : '') + '\n\nIt is saved in the applicant\u2019s Drive folder and used as page 2 of the PEL form in the compiled PDF.')) return;
+  const ref = deskRef; ['dkAttUp', 'dkAttDel', 'dkAttFile'].forEach(i => $(i).disabled = true); dkMsg('Reading the scan\u2026');
+  try {
+    const a = await readAttestedScan(f);
+    dkMsg('Saving to Drive\u2026');
+    await dkCall({ op: 'deskAttestedSave', reference: ref, mime: a.mime, data: a.data });
+    if (ref !== deskRef) return;                       // the staff member opened another application meanwhile; the scan is saved, the compiled PDF is rebuilt next time
+    deskAtt.attested = a; $('dkAttFile').value = '';
+    dkMsg('Attested back page saved in the applicant\u2019s folder.' + (deskCompiledOn ? ' Updating the compiled PDF\u2026' : ''));
+    dkMsg('Attested back page saved in the applicant\u2019s folder.' + await dkAttRefresh());
+  } catch (e){ console.error(e); dkMsg('Could not save the scan: ' + e.message); alert('The attested back page could not be saved:\n\n' + e.message); }
+  finally { dkButtons(); }
+};
+$('dkAttDel').onclick = async () => {
+  if (!deskRef || !deskAtt.attested || !confirm('Remove the attested back page of this application?\n\nThe compiled PDF will go back to the blank page 2.')) return;
+  ['dkAttUp', 'dkAttDel', 'dkAttFile'].forEach(i => $(i).disabled = true); dkMsg('Removing\u2026');
+  try {
+    await dkCall({ op: 'deskAttestedSave', reference: deskRef, remove: true });
+    delete deskAtt.attested;
+    dkMsg('Attested back page removed.' + await dkAttRefresh());
+  } catch (e){ console.error(e); dkMsg('Could not remove it: ' + e.message); alert(e.message); }
   finally { dkButtons(); }
 };
 $('dkApprove').onclick = async () => {
