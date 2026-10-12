@@ -338,6 +338,8 @@
   /* v6.3 address dropdowns + KTP venue */
   .geoOff{display:none !important} #province:not(.geoOff),#city:not(.geoOff),#country:not(.geoOff){margin-top:6px} .geoOff + .geoOff{display:none}
   .dkVenue{margin:8px 0;padding:8px 10px;border:1px dashed #6f9ad1;border-radius:8px;background:#f2f7ff;font-size:13px} .dkVenue select,.dkVenue input{width:100%;margin-top:4px}
+  .dkRem{display:block;margin-top:5px;padding:4px 8px;background:#fff8e1;border-left:3px solid #f0b429;border-radius:4px;font-size:12px;line-height:1.35;white-space:pre-wrap;color:#5a4300;overflow-wrap:anywhere} .dkRem b{color:#7a5500}
+  .dkRemShow{white-space:pre-wrap;max-height:180px;overflow:auto;margin:6px 0;padding:6px 8px;background:#fff8e1;border-left:3px solid #f0b429;border-radius:4px;font-size:12.5px;color:#5a4300;overflow-wrap:anywhere} .dkRemBox textarea{width:100%;box-sizing:border-box}
   /* v6.3 walk-in / assignment */
   .dkWalk{display:inline-block;font-size:11px;font-weight:800;letter-spacing:.4px;padding:1px 8px;border-radius:9px;background:#ffcf7a;color:#6b3a00;margin-right:4px}
   .dkAsg{display:inline-block;font-size:11px;font-weight:600;padding:1px 8px;border-radius:9px;background:#e3ecfa;color:#1d3f73;margin-top:2px}
@@ -558,6 +560,13 @@ details.anHelp{margin:10px 0 2px;font-size:.92rem}details.anHelp summary{cursor:
         <label class="tcLbl">Remarks (required if ineligible)</label><textarea id="loRem" rows="3"></textarea>
         <div class="loSigBox"><img id="loSigImg" alt="" hidden><div><b id="loName"></b><br><span id="loPos"></span><div class="hint" id="loSigMsg"></div></div></div>
         <div class="dkBtns"><button type="button" id="loSubmit" disabled>Save evaluation &amp; Form 001</button></div>
+      </div>
+      <div class="tcBox dkRemBox" id="dkRemBox">
+        <h3>Remarks</h3>
+        <div class="hint">Why is it delayed? Any issue or concern with this application? The remark is added to the Monitoring sheet (Remarks) and shows on the to-do list for everyone.</div>
+        <div class="dkRemShow" id="dkRemShow" hidden></div>
+        <textarea id="dkRemTxt" rows="2" maxlength="500" placeholder="e.g. Waiting for the applicant's corrected TOR / name on the diploma does not match" disabled></textarea>
+        <div class="dkBtns"><button type="button" id="dkRemAdd" class="ghost" disabled>Add remark</button></div>
       </div>
       <div class="tcBox"><button type="button" class="ghost" id="dkDownload" disabled style="width:100%">Download Flow PDF</button><div class="hint" id="dkMsg"></div></div>
     </aside>
@@ -3128,9 +3137,15 @@ function dkDays(r){
   return Math.max(1, Math.round((t0 - d) / 86400000) + 1);
 }
 const dkChip = n => n == null ? '' : `<span class="dkDays ${n <= 5 ? 'g' : n <= 10 ? 'y' : 'r'}">${n} day${n > 1 ? 's' : ''}</span>`;
+/* v7.6: the Monitoring > Remarks text on the to-do list: the latest 3 lines (hover for all of it) */
+function dkRemHtml(r){
+  const t = String(r.remarks || '').trim(); if (!t) return '';
+  const lines = t.split('\n').map(x => x.trim()).filter(Boolean), more = lines.length > 3 ? lines.length - 3 : 0;
+  return `<span class="dkRem" title="${esc(t)}"><b>Remarks${more ? ' (+' + more + ' earlier)' : ''}:</b> ${esc(lines.slice(-3).join('\n'))}</span>`;
+}
 function dkRender(){
   const q = $('dkSearch').value.trim().toLowerCase(), only = $('dkTodo').checked;
-  const rows = deskRows.filter(r => !(deskRole === 'tocid' && r.noTocid) && (!q || (r.name + ' ' + r.reference + ' ' + r.school).toLowerCase().includes(q)) && (!only || dkState(r) === 'TO DO'));
+  const rows = deskRows.filter(r => !(deskRole === 'tocid' && r.noTocid) && (!q || (r.name + ' ' + r.reference + ' ' + r.school + ' ' + (r.remarks || '')).toLowerCase().includes(q)) && (!only || dkState(r) === 'TO DO'));
   /* v6.3: WALK-IN group first, then dates from the OLDEST to the newest; inside a group the first submitted is on top */
   const WALK = '\u2605 WALK-IN \u2014 priority';
   const days = {}; rows.forEach(r => { const k = (r.walkIn && r.initial !== 'Approved') ? WALK : (r.day || 'No date'); (days[k] = days[k] || []).push(r); });
@@ -3145,7 +3160,7 @@ function dkRender(){
         return `<div class="tcItem${r.reference === deskRef ? ' on' : ''}" data-ref="${esc(r.reference)}">` +
           `<span class="tcTag ${st === 'DONE' ? 'ok' : st === 'WAITING' ? 'wait' : 'todo'}">${st}</span>${r.walkIn ? '<span class="dkWalk">WALK-IN</span>' : ''}<b>${n + 1}. ${esc(r.name)}</b> ${dkChip(dkDays(r))}` +
           `<small>${esc(r.type)} &middot; ${esc(r.school || 'school n/a')}${r.gradYear ? ' (' + esc(r.gradYear) + ')' : ''} &middot; ${esc(r.reference)}${r.hasDraft ? '' : ' &middot; no draft saved'}</small>` +
-          `<small>Step: ${esc(dkStep(r))}</small>` + asg + (r.busy ? `<span class="dkBusy">&#9203; Being processed: ${esc(r.busy)}</span>` : '') + `</div>`; }).join('');
+          `<small>Step: ${esc(dkStep(r))}</small>` + asg + (r.busy ? `<span class="dkBusy">&#9203; Being processed: ${esc(r.busy)}</span>` : '') + dkRemHtml(r) + `</div>`; }).join('');
   }).join('') || '<div class="tcItem">Nothing found.</div>';
 }
 async function dkRefresh(){
@@ -3165,7 +3180,8 @@ async function dkReleaseCurrent(){
 function dkClear(){
   deskRef = ''; deskCur = null; deskLoaded = false; tocidData = null;
   dkShowEmpty('Select an application from the list \u2014 the data flow appears here at once.'); $('dkInfo').hidden = true; $('dkAtt').hidden = true; $('dkCurrent').textContent = 'No application opened yet.';
-  ['tcValidate', 'tcNotOnList', 'tcReject', 'dkInitial', 'dkApprove', 'dkPermit', 'dkReject', 'dkEdit', 'dkDownload', 'loSubmit', 'dkWalkin', 'dkCompiled', 'dkAttFile', 'dkAttUp', 'dkAttDel'].forEach(i => $(i).disabled = true);
+  ['tcValidate', 'tcNotOnList', 'tcReject', 'dkInitial', 'dkApprove', 'dkPermit', 'dkReject', 'dkEdit', 'dkDownload', 'loSubmit', 'dkWalkin', 'dkCompiled', 'dkAttFile', 'dkAttUp', 'dkAttDel', 'dkRemTxt', 'dkRemAdd'].forEach(i => $(i).disabled = true);
+  $('dkRemShow').hidden = true; $('dkRemTxt').value = '';
   $('dkWalkin').checked = false; $('dkAttFile').value = ''; deskCompiledOn = false;
   deskSecBuilt = false; deskSec = {}; deskAtt = {};
 }
@@ -3176,6 +3192,8 @@ function dkButtons(){
   $('dkInitial').disabled = !(can && r && r.initial !== 'Approved');
   $('dkWalkin').disabled = !(can && deskRef && r && r.initial !== 'Approved' && deskRole === 'ald'); $('dkWalkin').checked = !!(r && r.walkIn);
   $('dkCompiled').disabled = !can;
+  const cur = deskRows.find(x => x.reference === deskRef) || r, rem = String(cur && cur.remarks || '').trim();   // v7.6: remarks of the opened application
+  $('dkRemTxt').disabled = !deskRef; $('dkRemAdd').disabled = !deskRef; $('dkRemShow').hidden = !(deskRef && rem); $('dkRemShow').textContent = rem;
   const attOk = !!(can && deskRef && r && deskRole === 'ald');                       // v7.5: attested back page
   $('dkAttFile').disabled = !attOk; $('dkAttUp').disabled = !attOk; $('dkAttDel').disabled = !(attOk && deskAtt.attested);
   $('dkAttState').innerHTML = !deskRef ? 'Open an application to upload the scanned, attested back page.' : deskAtt.attested ? '<b>Attested back page is on file</b> (saved in the applicant\u2019s Drive folder' + (deskCompiledOn ? ' and used in the compiled PDF' : '; it goes into the compiled PDF when that is generated') + ').' : 'No attested back page uploaded yet.';
@@ -3382,6 +3400,18 @@ $('dkCompiled').onclick = async () => {
   const b = $('dkCompiled'); b.disabled = true; dkMsg('Building the compiled PDF\u2026');
   try { const bytes = await buildCompiledPdf(deskAtt.permit ? b64ToBytes(deskAtt.permit.data) : null); download('COMPILED_' + (deskRef || draftFileName().replace(/^caap-draft_|\.json$/g, '')) + '.pdf', bytes); dkMsg('Compiled PDF downloaded.'); }
   catch (e){ console.error(e); dkMsg('Could not build it: ' + e.message); }
+  finally { dkButtons(); }
+};
+$('dkRemAdd').onclick = async () => {
+  if (!deskRef) return;
+  const t = $('dkRemTxt').value.trim();
+  if (t.length < 3){ dkMsg('Write the remark first (at least 3 characters).'); $('dkRemTxt').focus(); return; }
+  const ref = deskRef, b = $('dkRemAdd'); b.disabled = true; dkMsg('Saving the remark\u2026');
+  try {
+    const o = await dkCall({ op: 'deskRemark', reference: ref, text: t });
+    const row = deskRows.find(x => x.reference === ref); if (row) row.remarks = o.remarks; if (deskCur && deskCur.reference === ref) deskCur.remarks = o.remarks;
+    $('dkRemTxt').value = ''; dkMsg('Remark added. It is on the to-do list and in the Monitoring sheet.'); dkRender();
+  } catch (e){ console.error(e); dkMsg('Could not save the remark: ' + e.message); alert('The remark could not be saved:\n\n' + e.message); }
   finally { dkButtons(); }
 };
 /* ---- v7.5: attested back page (page 2 of PEL Form 541 / 542) ---- */
