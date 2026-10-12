@@ -1,3 +1,12 @@
+# v7.6 changes: remarks on the to-do list
+
+- **The Monitoring sheet's *Remarks* column now shows on every to-do list** (ALD, TOCID, Licensing Officer, administrator): a yellow line under the application with the latest 3 lines (hover for the whole text; "+n earlier" says how many are hidden). Whatever is in the cell appears: remarks typed in the sheet, the RPA drone weight, rejection / ineligible notes and the new desk remarks. The search box also searches the remarks. Press *Refresh list* to see remarks added in the sheet by someone else.
+- **New *Remarks* box in the desk (left column, all roles).** Open an application, write why it is delayed or the issue / concern, press **Add remark**. It is appended to the same Monitoring > Remarks cell as `yyyy-MM-dd HH:mm  Name (Role): text` (3-500 characters), shown at once on the list, and logged in Handled By. New server op `deskRemark`. To correct or delete a remark, edit the cell in the Monitoring sheet.
+
+**Update steps:** paste `backend/apps-script.gs` (keep your IDs and passcodes), redeploy as a **new version** (Deploy > Manage deployments > pencil > New version), upload `public/index.html`.
+
+---
+
 # v7.5 changes: attested back page of PEL Form 541 / 542
 
 - **New box in the ALD desk (ALD actions): *Attested back page*.** ALD staff (and the administrator) choose the scanned, attested page 2 of the PEL form (JPG, PNG or PDF, up to 12 MB) and press **Upload scan & update compiled PDF**. **Remove scan** undoes it.
